@@ -23,9 +23,27 @@ class TrelloResourceOptions(object):
     A configuration class for ``TrelloResource``.
     
     """
+    # A 'resource_uri_stub' is just the URI fragment, or stub, associated
+    # with a resource type. For example, 'lists' is the stub for Trello's lists,
+    # because in the URI scheme, list resources are accessed by appending
+    # "/lists/" to the URI. Science.
     resource_uri_stub = None
+    # 'subresources' is an iterable of strings, each corresponding to the URI
+    # fragment, or stub, that is associated with a resource type. A subresource
+    # is something I made up that means a resource that is created "inside" the
+    # context of another resource. Cards are subresources of lists. Lists are
+    # subresources of boards. Boards are subresources of organizations. 
     subresources = None
+    # A 'parent_resource' is what "owns" a resource. For example, the parent
+    # resource of a Trello list would be a board, since lists are only created
+    # in the context of a board. 'Card' resources might have several
+    # 'parent_resource' entries because Trello's API lets you walk up not just
+    # to the list context where the card resides, but also up to the board
+    # context where the list that contains the card resides. 
     parent_resources = None
+    # 'can_filter' is an iterable of subresources for which the `filter'
+    # method is implemented. These must correspond to entries in the
+    # 'subresources' iterable.
     can_filter = None
 
     def __new__(cls, meta=None):
@@ -70,6 +88,46 @@ class TrelloResource(object):
         self.api_url = '{protocol}://{domain}/{ver}/'.format(protocol=protocol,
                                                              domain=api_domain,
                                                              ver=api_version)
+
+    def get_parent_resources(self, resource_id, parents=None, field=None):
+        results = {}
+        
+        if not parents:
+            parents = self._meta.parent_resources
+        elif isinstance(parents, basestring):
+            parents = (parents,)
+
+        resource_uri = self._resource_instance_uri(resource_id)
+
+        for parent in parents:
+            request_url = resource_uri + parent + '/'
+
+            if field:
+                request_url += '%s/' % field
+            request_url += self.auth_string
+                
+            resp = requests.get(request_url)
+
+            if resp.status_code != 200:
+                raise AttributeError
+
+            # This is god awful and will break immediately. Unfortunately the
+            # Trello API uses different identifiers for the same resource
+            # sometimes. For example, a member resource might belong to many
+            # organizations, so in the url it is shown as
+            # '/members/idMember/organizations'.
+                
+            # However, a board resource will only ever belong to a single
+            # organization, so in the url it's '/board/idBoard/organization'.
+            
+            # To Do: Convince Joel Spolsky to only use singular nouns in his
+            # API scheme. Or maybe I can use URI templates or something.
+            if not parent.endswith('s'):
+                parent += 's'
+                
+            results[parent] = self._subresource_urls(parent, resp.content)
+
+        return results
 
     def get_subresources(self, resource_id, resources=None):
         results = {}
@@ -177,3 +235,17 @@ class Board(TrelloResource):
         ]
             
 
+class List(TrelloResource):
+
+    class Meta:
+        resource_uri_stub = 'lists'
+        subresources = [
+            'actions',
+            'cards'
+        ]
+        parent_resources = [
+            'board'
+        ]
+        can_filter = [
+            'cards'
+        ]
