@@ -105,11 +105,6 @@ class TrelloResource(object):
             if field:
                 request_url += '%s/' % field
             request_url += self.auth_string
-                
-            resp = requests.get(request_url)
-
-            if resp.status_code != 200:
-                raise AttributeError
 
             # This is god awful and will break immediately. Unfortunately the
             # Trello API uses different identifiers for the same resource
@@ -124,8 +119,8 @@ class TrelloResource(object):
             # API scheme. Or maybe I can use URI templates or something.
             if not parent.endswith('s'):
                 parent += 's'
-                
-            results[parent] = self._subresource_urls(parent, resp.content)
+
+            results[parent] = self._subresource_urls(request_url, parent)
 
         return results
 
@@ -154,12 +149,7 @@ class TrelloResource(object):
         for resource in resources:
             kwargs['subresource'] = resource
             request_url = '{url}{stub}/{id}/{subresource}{auth}'.format(**kwargs)
-            resp = requests.get(request_url)
-
-            if resp.status_code != 200:
-                raise AttributeError
-
-            results[resource] = self._subresource_urls(resource, resp.content)
+            results[resource] = self._subresource_urls(request_url, resource)
 
         return results
 
@@ -182,28 +172,29 @@ class TrelloResource(object):
             filters=filters,
             auth=self.auth_string
         )
-        resp = requests.get(request_url)
-
-        if resp.status_code != 200:
-            raise AttributeError
-
-        return {subresource: self._subresource_urls(subresource, resp.content)}
+        return {subresource: self._subresource_urls(request_url, subresource)}
 
     def _resource_instance_uri(self, resource_id):
         return u'{url}{stub}/{id}/'.format(url=self.api_url,
                                            stub=self._meta.resource_uri_stub,
                                            id=resource_id)
 
-    def _subresource_urls(self, resource, response):
+    def _subresource_urls(self, url, resource):
         kwargs = {'url': self.api_url, 'stub': resource,
                   'auth': self.auth_string}
-        response = json.loads(response)
+        resp = requests.get(url)
+
+        # This is gross, but temporary. I hope.
+        if resp.status_code != 200:
+            raise AttributeError
+
+        content = json.loads(resp.content)
 
         try:
-            ids = [result.get('id') for result in response if result.get('id')]
+            ids = [result.get('id') for result in content if result.get('id')]
         except AttributeError:
-            if response.get('id'):
-                ids = [response.get('id')]
+            if content.get('id'):
+                ids = [content.get('id')]
             else:
                 raise StopIteration
 
